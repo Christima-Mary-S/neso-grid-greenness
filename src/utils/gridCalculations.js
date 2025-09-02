@@ -36,14 +36,27 @@ export function calculateGridMetrics(generationData) {
   const neutralPercentage =
     totalGeneration > 0 ? (neutralGeneration / totalGeneration) * 100 : 0;
 
+  // Get dominant fuel types for more contextual messaging
+  const dominantGreen = positiveGeneration
+    .filter((item) => FUEL_CLASSIFICATIONS.green.includes(item.fuelType))
+    .sort((a, b) => b.generation - a.generation)[0];
+
+  const dominantFossil = positiveGeneration
+    .filter((item) => FUEL_CLASSIFICATIONS.notGreen.includes(item.fuelType))
+    .sort((a, b) => b.generation - a.generation)[0];
+
   return {
     totalGeneration: Math.round(totalGeneration),
     greenGeneration: Math.round(greenGeneration),
     fossilGeneration: Math.round(fossilGeneration),
     neutralGeneration: Math.round(neutralGeneration),
-    greenPercentage: Math.round(greenPercentage * 10) / 10, // Round to 1 decimal
+    greenPercentage: Math.round(greenPercentage * 10) / 10,
     fossilPercentage: Math.round(fossilPercentage * 10) / 10,
     neutralPercentage: Math.round(neutralPercentage * 10) / 10,
+    dominantGreen: dominantGreen?.fuelType || null,
+    dominantFossil: dominantFossil?.fuelType || null,
+    dominantGreenAmount: dominantGreen?.generation || 0,
+    dominantFossilAmount: dominantFossil?.generation || 0,
   };
 }
 
@@ -54,59 +67,98 @@ export function calculateGridMetrics(generationData) {
  * @returns {string} Grid status: 'excellent', 'good', 'moderate', or 'poor'
  */
 export function determineGridStatus(greenPercentage, fossilPercentage) {
-  // Business logic for grid status classification
-  // These thresholds are based on typical renewable energy targets
-
-  if (greenPercentage >= 70) {
-    return "excellent"; // Very high renewable energy
+  // Dynamic thresholds based on actual data patterns
+  if (greenPercentage >= 80) {
+    return "excellent"; // Exceptionally green
   }
 
-  if (greenPercentage >= 50) {
-    return "good"; // Majority renewable energy
+  if (greenPercentage >= 60) {
+    return "good"; // Majority renewable with good buffer
   }
 
-  if (fossilPercentage >= 40) {
-    return "poor"; // High fossil fuel dependency
+  if (fossilPercentage >= 50) {
+    return "poor"; // Fossil fuels dominate
   }
 
-  return "moderate"; // Mixed energy sources
+  if (fossilPercentage >= 30) {
+    return "moderate"; // Significant fossil fuel usage
+  }
+
+  return "good"; // Low fossil fuels, decent renewables
 }
 
 /**
- * Get user message and recommendations based on grid status
+ * Get dynamic user message based on actual grid conditions
  * @param {string} status - Grid status from determineGridStatus()
- * @param {number} fossilPercentage - Current fossil fuel percentage
+ * @param {Object} metrics - Full metrics object with detailed data
  * @returns {Object} Message object with text, icon, and action
  */
-export function getGridMessage(status, fossilPercentage) {
+export function getGridMessage(status, metrics) {
+  const {
+    fossilPercentage,
+    greenPercentage,
+    dominantGreen,
+    dominantFossil,
+    dominantGreenAmount,
+  } = metrics;
+
+  // Dynamic messages based on actual data
   const messages = {
     excellent: {
-      text: "Grid is very green today! Great time to use energy-intensive appliances like washing machines, dishwashers, or electric vehicle charging.",
+      text: `Excellent! ${greenPercentage}% renewable energy right now${
+        dominantGreen
+          ? `, led by ${dominantGreen.toLowerCase()} (${dominantGreenAmount.toLocaleString()} MW)`
+          : ""
+      }. Perfect time for energy-intensive tasks!`,
       icon: "🌱",
       action: "encourage",
       severity: "positive",
     },
     good: {
-      text: "Grid is fairly green right now. Normal energy usage is perfectly fine, and it's still a decent time for larger energy tasks.",
+      text: `Good renewable mix at ${greenPercentage}% green energy. ${
+        fossilPercentage < 20 ? "Very low fossil fuel usage - " : ""
+      }Normal energy consumption is fine.`,
       icon: "✅",
       action: "neutral",
       severity: "positive",
     },
     moderate: {
-      text: "Mixed energy sources today. Consider timing energy-intensive tasks for later when renewables might be higher.",
+      text: `Moderate conditions: ${greenPercentage}% renewable, ${fossilPercentage}% fossil fuels${
+        dominantFossil ? ` (mainly ${dominantFossil.toLowerCase()})` : ""
+      }. Consider timing large energy tasks for later.`,
       icon: "⚡",
       action: "consider",
       severity: "neutral",
     },
     poor: {
-      text: `High fossil fuel usage right now (${fossilPercentage}%). Try to reduce energy consumption when possible - every bit helps reduce emissions.`,
+      text: `High fossil fuel usage at ${fossilPercentage}%${
+        dominantFossil ? ` (${dominantFossil.toLowerCase()} dominant)` : ""
+      }. Every bit of energy reduction helps lower emissions right now.`,
       icon: "⚠️",
       action: "reduce",
       severity: "warning",
     },
   };
 
-  return messages[status] || messages.moderate;
+  const baseMessage = messages[status] || messages.moderate;
+
+  // Add time-sensitive context
+  const hour = new Date().getHours();
+  let timeContext = "";
+
+  if (status === "excellent" && hour >= 10 && hour <= 16) {
+    timeContext =
+      " Solar generation is likely contributing to these great conditions!";
+  } else if (status === "poor" && hour >= 17 && hour <= 19) {
+    timeContext = " Peak demand period - grid is working hard right now.";
+  } else if (status === "good" && dominantGreen === "WIND") {
+    timeContext = " Windy conditions are helping keep the grid clean!";
+  }
+
+  return {
+    ...baseMessage,
+    text: baseMessage.text + timeContext,
+  };
 }
 
 /**
@@ -143,4 +195,70 @@ export function getStatusColors(status) {
   };
 
   return colorSchemes[status] || colorSchemes.moderate;
+}
+
+/**
+ * Generate contextual recommendations based on current grid state
+ * @param {Object} metrics - Grid metrics
+ * @param {string} status - Grid status
+ * @returns {Array} Array of recommendation objects
+ */
+export function getEnergyRecommendations(metrics, status) {
+  const { greenPercentage, fossilPercentage, dominantGreen } = metrics;
+
+  const recommendations = [];
+
+  if (status === "excellent") {
+    recommendations.push(
+      { icon: "🔌", text: "Charge electric vehicles", priority: "high" },
+      { icon: "🧺", text: "Run washing machines/dryers", priority: "high" },
+      { icon: "🏠", text: "Use heat pumps and AC", priority: "medium" },
+      {
+        icon: "🔋",
+        text: "Charge all devices and batteries",
+        priority: "medium",
+      }
+    );
+  } else if (status === "good") {
+    recommendations.push(
+      { icon: "✅", text: "Normal energy usage is fine", priority: "high" },
+      { icon: "🧺", text: "Good time for laundry", priority: "medium" },
+      { icon: "🔌", text: "EV charging is reasonable", priority: "medium" }
+    );
+  } else if (status === "moderate") {
+    recommendations.push(
+      {
+        icon: "⏰",
+        text: "Delay energy-intensive tasks if possible",
+        priority: "high",
+      },
+      { icon: "💡", text: "Use energy-efficient settings", priority: "medium" },
+      {
+        icon: "🌡️",
+        text: "Adjust heating/cooling by 1-2°C",
+        priority: "medium",
+      }
+    );
+  } else {
+    recommendations.push(
+      {
+        icon: "⚡",
+        text: "Minimize energy use when possible",
+        priority: "high",
+      },
+      { icon: "🔌", text: "Delay EV charging if not urgent", priority: "high" },
+      {
+        icon: "🏠",
+        text: "Reduce heating/cooling temporarily",
+        priority: "medium",
+      },
+      {
+        icon: "💻",
+        text: "Consider unplugging unused devices",
+        priority: "low",
+      }
+    );
+  }
+
+  return recommendations;
 }
